@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("kotlin-android")
@@ -6,6 +8,25 @@ plugins {
 }
 
 android {
+    val secrets = Properties().apply {
+        val secretsFile = rootProject.file("secrets.properties")
+        if (secretsFile.exists()) {
+            secretsFile.inputStream().use { load(it) }
+        }
+        val localPropsFile = rootProject.file("local.properties")
+        if (localPropsFile.exists()) {
+            localPropsFile.inputStream().use { load(it) }
+        }
+    }
+
+    val googleMapsApiKey =
+        (secrets.getProperty("GOOGLE_MAPS_API_KEY")?.trim()?.takeIf { it.isNotEmpty() })
+            ?: (secrets.getProperty("MAPS_API_KEY")?.trim()?.takeIf { it.isNotEmpty() })
+            ?: (project.findProperty("GOOGLE_MAPS_API_KEY") as String?)?.trim()?.takeIf { it.isNotEmpty() }
+            ?: (project.findProperty("MAPS_API_KEY") as String?)?.trim()?.takeIf { it.isNotEmpty() }
+            ?: System.getenv("GOOGLE_MAPS_API_KEY")?.trim()?.takeIf { it.isNotEmpty() }
+            ?: System.getenv("MAPS_API_KEY")?.trim()?.takeIf { it.isNotEmpty() }
+
     namespace = "com.example.draaxi_driver"
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
@@ -28,6 +49,7 @@ android {
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+        resValue("string", "google_maps_key", googleMapsApiKey ?: "")
     }
 
     buildTypes {

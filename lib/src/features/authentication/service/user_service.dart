@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
@@ -6,6 +7,7 @@ import 'package:draaxi_driver/src/features/authentication/service/token_storage_
 
 class UserService {
   static const String baseUrl = 'https://draaxi.com/api';
+  static const Duration _requestTimeout = Duration(seconds: 25);
 
   void _logRequest(String method, Uri url, Map<String, String> headers, Map<String, dynamic>? body) {
     debugPrint('═══════════════════════════════════════════════════════');
@@ -67,7 +69,6 @@ class UserService {
       
       if (token != null && token.isNotEmpty) {
         debugPrint('🔐 Token preview: ${token.substring(0, token.length > 20 ? 20 : token.length)}...');
-        debugPrint('🔐 Full Authorization header: Bearer $token');
       } else {
         debugPrint('❌ WARNING: No token found in storage! This will cause 401 Unauthenticated error.');
       }
@@ -87,14 +88,36 @@ class UserService {
       
       _logRequest('GET', url, headers, null);
       
-      final response = await http.get(
-        url,
-        headers: headers,
-      );
+      final response = await http
+          .get(
+            url,
+            headers: headers,
+          )
+          .timeout(_requestTimeout);
 
       _logResponse(response.statusCode, response.headers, response.body);
 
-      final responseData = jsonDecode(response.body) as Map<String, dynamic>;
+      Map<String, dynamic>? responseData;
+      try {
+        final decoded = jsonDecode(response.body);
+        if (decoded is Map<String, dynamic>) {
+          responseData = decoded;
+        }
+      } catch (_) {
+        responseData = null;
+      }
+
+      if (responseData == null) {
+        final bodySnippet = response.body.length > 300
+            ? response.body.substring(0, 300)
+            : response.body;
+        return {
+          'success': false,
+          'error': 'Unexpected server response (${response.statusCode})',
+          'body': bodySnippet,
+          'statusCode': response.statusCode,
+        };
+      }
 
       // Log authentication status
       if (response.statusCode == 401) {
@@ -113,14 +136,21 @@ class UserService {
         return {
           'success': true,
           'data': responseData,
+          'statusCode': response.statusCode,
         };
       } else {
         return {
           'success': false,
           'error': responseData['message'] ?? responseData['error'] ?? 'Failed to fetch profile',
           'errors': responseData['errors'],
+          'statusCode': response.statusCode,
         };
       }
+    } on TimeoutException {
+      return {
+        'success': false,
+        'error': 'Request timed out. Please try again.',
+      };
     } catch (e) {
       return {
         'success': false,
@@ -295,4 +325,3 @@ class UserService {
     }
   }
 }
-

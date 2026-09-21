@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
@@ -5,6 +6,7 @@ import 'package:draaxi_driver/src/features/authentication/service/token_storage_
 
 class AuthService {
   static const String baseUrl = 'https://draaxi.com/api';
+  static const Duration _requestTimeout = Duration(seconds: 25);
 
   Map<String, dynamic> _failureResponse(
     Map<String, dynamic> responseData, {
@@ -79,6 +81,86 @@ class AuthService {
     debugPrint('═══════════════════════════════════════════════════════');
   }
 
+  Map<String, String> _normalizeHeaders(Map<String, String> headers) {
+    final normalized = Map<String, String>.from(headers);
+
+    normalized.putIfAbsent('Accept', () => 'application/json');
+    normalized.putIfAbsent('Content-Type', () => 'application/json');
+    normalized.putIfAbsent('User-Agent', () => 'draaxi_driver_flutter');
+
+    return normalized;
+  }
+
+  Future<Map<String, dynamic>> _postJson(
+    Uri url, {
+    required Map<String, String> headers,
+    Map<String, dynamic>? requestBody,
+    required String fallbackMessage,
+  }) async {
+    final normalizedHeaders = _normalizeHeaders(headers);
+    final bodyForLog = requestBody ?? <String, dynamic>{};
+    _logRequest('POST', url, normalizedHeaders, bodyForLog);
+
+    try {
+      final response = await http
+          .post(
+            url,
+            headers: normalizedHeaders,
+            body: requestBody == null ? null : jsonEncode(requestBody),
+          )
+          .timeout(_requestTimeout);
+
+      _logResponse(response.statusCode, response.headers, response.body);
+
+      Map<String, dynamic>? responseData;
+      try {
+        final decoded = jsonDecode(response.body);
+        if (decoded is Map<String, dynamic>) {
+          responseData = decoded;
+        } else if (decoded is List) {
+          responseData = <String, dynamic>{'data': decoded};
+        }
+      } catch (_) {
+        responseData = null;
+      }
+
+      if (responseData == null) {
+        final bodySnippet = response.body.length > 300
+            ? response.body.substring(0, 300)
+            : response.body;
+        return {
+          'success': false,
+          'error': 'Unexpected server response (${response.statusCode})',
+          'body': bodySnippet,
+          'statusCode': response.statusCode,
+        };
+      }
+
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        return {
+          'success': true,
+          'data': responseData,
+          'statusCode': response.statusCode,
+        };
+      }
+
+      final failure =
+          _failureResponse(responseData, fallbackMessage: fallbackMessage);
+      failure['statusCode'] = response.statusCode;
+      return failure;
+    } on TimeoutException {
+      return {
+        'success': false,
+        'error': 'Request timed out. Please try again.',
+      };
+    } catch (e) {
+      return {
+        'success': false,
+        'error': 'Network error: ${e.toString()}',
+      };
+    }
+  }
+
   Future<Map<String, dynamic>> signup({
     required String name,
     required String email,
@@ -89,51 +171,25 @@ class AuthService {
     required String passwordConfirmation,
     required String role,
   }) async {
-    try {
-      final url = Uri.parse('$baseUrl/auth/signup');
-      
-      final requestBody = {
-        'name': name,
-        'email': email,
-        'phone': phone,
-        'country_code': countryCode,
-        'gender': gender,
-        'password': password,
-        'password_confirmation': passwordConfirmation,
-        'role': role,
-      };
-      
-      final headers = {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-      };
-      
-      _logRequest('POST', url, headers, requestBody);
-      
-      final response = await http.post(
-        url,
-        headers: headers,
-        body: jsonEncode(requestBody),
-      );
+    final url = Uri.parse('$baseUrl/auth/signup');
 
-      _logResponse(response.statusCode, response.headers, response.body);
+    final requestBody = {
+      'name': name,
+      'email': email,
+      'phone': phone,
+      'country_code': countryCode,
+      'gender': gender,
+      'password': password,
+      'password_confirmation': passwordConfirmation,
+      'role': role,
+    };
 
-      final responseData = jsonDecode(response.body) as Map<String, dynamic>;
-
-      if (response.statusCode >= 200 && response.statusCode < 300) {
-        return {
-          'success': true,
-          'data': responseData,
-        };
-      } else {
-        return _failureResponse(responseData, fallbackMessage: 'Signup failed');
-      }
-    } catch (e) {
-      return {
-        'success': false,
-        'error': 'Network error: ${e.toString()}',
-      };
-    }
+    return _postJson(
+      url,
+      headers: const {},
+      requestBody: requestBody,
+      fallbackMessage: 'Signup failed',
+    );
   }
 
   Future<Map<String, dynamic>> verifySignupOtp({
@@ -156,7 +212,6 @@ class AuthService {
       if (token != null && token.isNotEmpty) {
         headers['Authorization'] = 'Bearer $token';
         debugPrint('✅ Authorization header added with token: ${token.substring(0, token.length > 10 ? 10 : token.length)}... (length: ${token.length})');
-        debugPrint('🔐 Full Authorization header: Bearer $token');
       } else {
         debugPrint('❌ No token available, proceeding without Authorization header');
       }
@@ -172,29 +227,12 @@ class AuthService {
         debugPrint('✅ Token added to request body');
       }
       
-      _logRequest('POST', url, headers, requestBody);
-      
-      final response = await http.post(
+      return _postJson(
         url,
         headers: headers,
-        body: jsonEncode(requestBody),
+        requestBody: requestBody,
+        fallbackMessage: 'OTP verification failed',
       );
-
-      _logResponse(response.statusCode, response.headers, response.body);
-
-      final responseData = jsonDecode(response.body) as Map<String, dynamic>;
-
-      if (response.statusCode >= 200 && response.statusCode < 300) {
-        return {
-          'success': true,
-          'data': responseData,
-        };
-      } else {
-        return _failureResponse(
-          responseData,
-          fallbackMessage: 'OTP verification failed',
-        );
-      }
     } catch (e) {
       return {
         'success': false,
@@ -207,91 +245,36 @@ class AuthService {
     required String identifier,
     required String password,
   }) async {
-    try {
-      final url = Uri.parse('$baseUrl/auth/login');
-      
-      final requestBody = {
-        'identifier': identifier,
-        'password': password,
-      };
-      
-      final headers = {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-      };
-      
-      _logRequest('POST', url, headers, requestBody);
-      
-      final response = await http.post(
-        url,
-        headers: headers,
-        body: jsonEncode(requestBody),
-      );
+    final url = Uri.parse('$baseUrl/auth/login');
 
-      _logResponse(response.statusCode, response.headers, response.body);
+    final requestBody = {
+      'identifier': identifier,
+      'password': password,
+    };
 
-      final responseData = jsonDecode(response.body) as Map<String, dynamic>;
-
-      if (response.statusCode >= 200 && response.statusCode < 300) {
-        return {
-          'success': true,
-          'data': responseData,
-        };
-      } else {
-        return _failureResponse(responseData, fallbackMessage: 'Login failed');
-      }
-    } catch (e) {
-      return {
-        'success': false,
-        'error': 'Network error: ${e.toString()}',
-      };
-    }
+    return _postJson(
+      url,
+      headers: const {},
+      requestBody: requestBody,
+      fallbackMessage: 'Login failed',
+    );
   }
 
   Future<Map<String, dynamic>> sendForgotOtp({
     required String email,
   }) async {
-    try {
-      final url = Uri.parse('$baseUrl/auth/send-forgot-otp');
-      
-      final requestBody = {
-        'email': email,
-      };
-      
-      final headers = {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-      };
-      
-      _logRequest('POST', url, headers, requestBody);
-      
-      final response = await http.post(
-        url,
-        headers: headers,
-        body: jsonEncode(requestBody),
-      );
+    final url = Uri.parse('$baseUrl/auth/send-forgot-otp');
 
-      _logResponse(response.statusCode, response.headers, response.body);
+    final requestBody = {
+      'email': email,
+    };
 
-      final responseData = jsonDecode(response.body) as Map<String, dynamic>;
-
-      if (response.statusCode >= 200 && response.statusCode < 300) {
-        return {
-          'success': true,
-          'data': responseData,
-        };
-      } else {
-        return _failureResponse(
-          responseData,
-          fallbackMessage: 'Failed to send OTP',
-        );
-      }
-    } catch (e) {
-      return {
-        'success': false,
-        'error': 'Network error: ${e.toString()}',
-      };
-    }
+    return _postJson(
+      url,
+      headers: const {},
+      requestBody: requestBody,
+      fallbackMessage: 'Failed to send OTP',
+    );
   }
 
   Future<Map<String, dynamic>> verifyForgotOtp({
@@ -329,29 +312,12 @@ class AuthService {
         debugPrint('✅ Reset token added to request body');
       }
       
-      _logRequest('POST', url, headers, requestBody);
-      
-      final response = await http.post(
+      return _postJson(
         url,
         headers: headers,
-        body: jsonEncode(requestBody),
+        requestBody: requestBody,
+        fallbackMessage: 'OTP verification failed',
       );
-
-      _logResponse(response.statusCode, response.headers, response.body);
-
-      final responseData = jsonDecode(response.body) as Map<String, dynamic>;
-
-      if (response.statusCode >= 200 && response.statusCode < 300) {
-        return {
-          'success': true,
-          'data': responseData,
-        };
-      } else {
-        return _failureResponse(
-          responseData,
-          fallbackMessage: 'OTP verification failed',
-        );
-      }
     } catch (e) {
       return {
         'success': false,
@@ -390,29 +356,12 @@ class AuthService {
         requestBody['reset_token'] = resetToken;
       }
       
-      _logRequest('POST', url, headers, requestBody);
-      
-      final response = await http.post(
+      return _postJson(
         url,
         headers: headers,
-        body: jsonEncode(requestBody),
+        requestBody: requestBody,
+        fallbackMessage: 'Password reset failed',
       );
-
-      _logResponse(response.statusCode, response.headers, response.body);
-
-      final responseData = jsonDecode(response.body) as Map<String, dynamic>;
-
-      if (response.statusCode >= 200 && response.statusCode < 300) {
-        return {
-          'success': true,
-          'data': responseData,
-        };
-      } else {
-        return _failureResponse(
-          responseData,
-          fallbackMessage: 'Password reset failed',
-        );
-      }
     } catch (e) {
       return {
         'success': false,
@@ -424,41 +373,26 @@ class AuthService {
   Future<Map<String, dynamic>> logout() async {
     try {
       final url = Uri.parse('$baseUrl/logout');
-      
-      // Get saved token
+
       final token = await TokenStorageService.getToken();
-      
-      final Map<String, String> headers = {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-      };
-      
-      // Add Authorization header if token exists
+
+      final Map<String, String> headers = {};
       if (token != null && token.isNotEmpty) {
         headers['Authorization'] = 'Bearer $token';
       }
-      
-      _logRequest('POST', url, headers, {});
-      
-      final response = await http.post(
+
+      final result = await _postJson(
         url,
         headers: headers,
+        requestBody: null,
+        fallbackMessage: 'Logout failed',
       );
 
-      _logResponse(response.statusCode, response.headers, response.body);
-
-      final responseData = jsonDecode(response.body) as Map<String, dynamic>;
-
-      if (response.statusCode >= 200 && response.statusCode < 300) {
-        // Remove token from storage after successful logout
+      if (result['success'] == true) {
         await TokenStorageService.removeToken();
-        return {
-          'success': true,
-          'data': responseData,
-        };
-      } else {
-        return _failureResponse(responseData, fallbackMessage: 'Logout failed');
       }
+
+      return result;
     } catch (e) {
       return {
         'success': false,

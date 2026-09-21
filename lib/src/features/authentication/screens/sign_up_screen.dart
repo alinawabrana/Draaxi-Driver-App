@@ -56,6 +56,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
   bool _isLoading = false;
 
   final AuthService _authService = AuthService();
+  final UserService _userService = UserService();
 
   static const Color _primaryColor = Color(0xFFFEC400);
 
@@ -266,39 +267,37 @@ class _SignUpScreenState extends State<SignUpScreen> {
             }
 
             if (token != null && token.isNotEmpty) {
-              final profileResult = await UserService().getUserProfile();
-              if (profileResult['success'] == true) {
-                final data = profileResult['data'] as Map<String, dynamic>;
-                final role = data['role'] as String?;
-                if (role != null && role.toLowerCase() != 'driver') {
-                  await TokenStorageService.removeToken();
-                  if (!mounted) return;
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text(
-                        'Only driver accounts can login in this app.',
-                      ),
-                      backgroundColor: Colors.red,
-                    ),
-                  );
-                  return;
-                }
-              } else {
+              final user = responseData?['user'] as Map<String, dynamic>?;
+              final role = user?['role'] as String?;
+              if (role != null && role.toLowerCase() != 'driver') {
                 await TokenStorageService.removeToken();
                 if (!mounted) return;
                 ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
+                  const SnackBar(
                     content: Text(
-                      AHelperFunction.extractErrorMessage(
-                        profileResult,
-                        defaultMessage:
-                            'Unable to verify account type. Please try again.',
-                      ),
+                      'Only driver accounts can login in this app.',
                     ),
                     backgroundColor: Colors.red,
                   ),
                 );
                 return;
+              }
+
+              final profileResult = await _userService.getUserProfile();
+              debugPrint(
+                '👤 Driver profile fetch after login: success=${profileResult['success']}',
+              );
+              if (profileResult['success'] == true) {
+                final profileData =
+                    profileResult['data'] as Map<String, dynamic>?;
+                debugPrint('👤 Driver profile payload: $profileData');
+                final driverProfile =
+                    profileData?['driver_profile'] as Map<String, dynamic>?;
+                debugPrint('🚗 Driver profile details: $driverProfile');
+              } else {
+                debugPrint(
+                  '❌ Driver profile fetch after login failed: ${profileResult['error']}',
+                );
               }
             }
 
