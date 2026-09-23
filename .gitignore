@@ -12,6 +12,13 @@
 .swiftpm/
 migrate_working_dir/
 
+# Environment / secrets (never commit real keys)
+.env
+.env.local
+.env.*.local
+android/secrets.properties
+ios/Flutter/Secrets.xcconfig
+
 # IntelliJ related
 *.iml
 *.ipr
@@ -43,5 +50,3 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
-
-ios/Flutter/Secrets.xcconfig

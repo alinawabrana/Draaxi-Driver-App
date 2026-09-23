@@ -8,15 +8,35 @@ plugins {
 }
 
 android {
+    // Load secrets: project-root `.env` first, then android/secrets.properties, then local.properties.
+    // Later files override earlier ones for the same key.
     val secrets = Properties().apply {
-        val secretsFile = rootProject.file("secrets.properties")
-        if (secretsFile.exists()) {
-            secretsFile.inputStream().use { load(it) }
+        fun loadIfExists(file: java.io.File) {
+            if (!file.exists()) return
+            file.inputStream().use { stream ->
+                stream.bufferedReader().useLines { lines ->
+                    lines.forEach { raw ->
+                        val line = raw.trim()
+                        if (line.isEmpty() || line.startsWith("#")) return@forEach
+                        val idx = line.indexOf('=')
+                        if (idx <= 0) return@forEach
+                        val key = line.substring(0, idx).trim()
+                        var value = line.substring(idx + 1).trim()
+                        if ((value.startsWith("\"") && value.endsWith("\"")) ||
+                            (value.startsWith("'") && value.endsWith("'"))
+                        ) {
+                            value = value.substring(1, value.length - 1)
+                        }
+                        setProperty(key, value)
+                    }
+                }
+            }
         }
-        val localPropsFile = rootProject.file("local.properties")
-        if (localPropsFile.exists()) {
-            localPropsFile.inputStream().use { load(it) }
-        }
+
+        // android/ -> project root
+        loadIfExists(rootProject.file("../.env"))
+        loadIfExists(rootProject.file("secrets.properties"))
+        loadIfExists(rootProject.file("local.properties"))
     }
 
     val googleMapsApiKey =
